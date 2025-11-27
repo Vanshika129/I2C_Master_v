@@ -1,0 +1,108 @@
+`timescale 1ns/1ps
+
+module tb_i2c;
+
+    reg clk;
+    reg rst;
+    reg en_start;
+    reg sda_in;
+    wire sda;
+    wire scl;
+
+    reg [6:0] slave_address = 7'b1010000;   // Example slave address
+    reg read_write;                         // 0 = write, 1 = read
+    reg [7:0] reg_addr;                     // Register address
+    reg [7:0] data_in;                      // Data to be written
+    wire [7:0] data_out;                    // Data read from slave
+
+    // DUT Instance
+    i2c uut (
+        .clk(clk),
+        .rst(rst),
+        .en_start(en_start),
+        .scl(scl),
+        .tristate(),
+        .sda_out(),
+        .sda_in(sda_in),
+        .slave_address_in(slave_address),
+        .read_write_in(read_write),
+        .register_address_in(reg_addr),
+        .data_in(data_in),
+        .data_out(data_out)
+    );
+
+    // Clock generation: 10ns period
+    always #5 clk = ~clk;
+
+    // Simple I2C slave MODEL
+    // Slave returns ACK (pull SDA low)
+    // Slave sends 0x5A as read data
+    reg [7:0] slave_read_data = 8'h5A;
+
+    // SDA line behavior (tri-state simulation)
+    assign sda = uut.tristate ? 1'bz : uut.sda_out;
+
+    always @(*) begin
+        if (uut.tristate) begin
+            // Acting as Slave only when master releases SDA
+            // ACK during address, reg, write-data phases
+            if (uut.current_state == uut.ack_ad ||
+                uut.current_state == uut.ack_addreg ||
+                uut.current_state == uut.data_ack && read_write == 0)
+                sda_in = 0;
+
+            // During read-data phase: send bits
+            else if (uut.current_state == uut.data && read_write == 1)
+                sda_in = slave_read_data[7 - uut.bit_count];
+
+            else
+                sda_in = 1;  // Default high
+        end
+        else begin
+            sda_in = 1'b1; // Master drives SDA
+        end
+    end
+
+
+    // Test Sequence
+    initial begin
+        $dumpfile("i2c_tb.vcd");
+        $dumpvars(0, tb_i2c);
+
+        clk = 0;
+        rst = 1;
+        en_start = 0;
+        sda_in = 1;
+        reg_addr = 8'h10;
+        data_in = 8'hA5;
+
+        #20 rst = 0;
+
+        // -------------------------
+        //  WRITE TRANSACTION
+        // -------------------------
+        $display("\n--- I2C WRITE: reg 0x10 = 0xA5 ---\n");
+        read_write = 0;     // Write mode
+        #50 en_start = 1;
+        #20 en_start = 0;
+
+        wait(uut.current_state == uut.stop);
+        #100;
+
+        // -------------------------
+        //  READ TRANSACTION
+        // -------------------------
+        $display("\n--- I2C READ: reading reg 0x10 ---\n");
+        read_write = 1;     // Read mode
+        #50 en_start = 1;
+        #20 en_start = 0;
+
+        wait(uut.current_state == uut.stop);
+        #100;
+
+        $display("\n READ DATA = %h", data_out);
+
+        #200 $finish;
+    end
+
+endmodule
